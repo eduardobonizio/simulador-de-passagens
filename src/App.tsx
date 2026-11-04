@@ -26,8 +26,8 @@ import {
 
 type ActiveTab = 'dashboard' | 'fila24h' | 'planilha' | 'porticos' | 'dax';
 
-const STORAGE_KEY_RECORDS = 'cca_freeflow_records_v4';
-const STORAGE_KEY_CONFIG = 'cca_freeflow_config_v4';
+const STORAGE_KEY_RECORDS = 'cca_freeflow_records_v5';
+const STORAGE_KEY_CONFIG = 'cca_freeflow_config_v5';
 
 const DEFAULT_CONFIG: GeneratorConfig = {
   isRunning: false,
@@ -45,7 +45,7 @@ const DEFAULT_CONFIG: GeneratorConfig = {
 };
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard');
+  const [activeTab, setActiveTab] = useState<ActiveTab>('fila24h');
   const [workstationMode, setWorkstationMode] = useState<boolean>(false);
   const activeLockedSeqRef = useRef<number | null>(null);
 
@@ -64,7 +64,7 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY_RECORDS);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
+        if (Array.isArray(parsed) && parsed.length >= 50) {
           return parsed;
         }
       }
@@ -1018,7 +1018,7 @@ export default function App() {
           href="#top"
           onClick={(e) => {
             e.preventDefault();
-            handleSwitchTab('dashboard');
+            handleSwitchTab('fila24h');
           }}
           className="text-base font-bold tracking-tight text-slate-900 whitespace-nowrap shrink-0"
         >
@@ -1026,16 +1026,6 @@ export default function App() {
         </a>
 
         <nav className="hidden lg:flex items-center gap-6 text-sm font-medium text-slate-600">
-          <button
-            onClick={() => handleSwitchTab('dashboard')}
-            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
-              activeTab === 'dashboard'
-                ? 'border-sky-600 text-slate-900 font-semibold'
-                : 'border-transparent'
-            }`}
-          >
-            Painel Executivo PBI
-          </button>
           <button
             onClick={() => handleSwitchTab('fila24h')}
             className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
@@ -1045,6 +1035,16 @@ export default function App() {
             }`}
           >
             Fila &amp; Treinamento 24h ({queueCount})
+          </button>
+          <button
+            onClick={() => handleSwitchTab('dashboard')}
+            className={`hover:text-slate-900 transition-colors whitespace-nowrap shrink-0 py-1 border-b-2 ${
+              activeTab === 'dashboard'
+                ? 'border-sky-600 text-slate-900 font-semibold'
+                : 'border-transparent'
+            }`}
+          >
+            Painel Executivo PBI
           </button>
           <button
             onClick={() => handleSwitchTab('planilha')}
@@ -1095,16 +1095,6 @@ export default function App() {
       {/* Navegação responsiva para telas menores */}
       <div className="lg:hidden bg-white border-b border-slate-200 px-4 py-2 flex items-center gap-2 overflow-x-auto">
         <button
-          onClick={() => handleSwitchTab('dashboard')}
-          className={`px-3 py-1.5 text-xs font-medium rounded whitespace-nowrap shrink-0 ${
-            activeTab === 'dashboard'
-              ? 'bg-slate-900 text-white'
-              : 'text-slate-600'
-          }`}
-        >
-          Painel PBI
-        </button>
-        <button
           onClick={() => handleSwitchTab('fila24h')}
           className={`px-3 py-1.5 text-xs font-medium rounded whitespace-nowrap shrink-0 ${
             activeTab === 'fila24h'
@@ -1113,6 +1103,16 @@ export default function App() {
           }`}
         >
           Fila &amp; Treino 24h ({queueCount})
+        </button>
+        <button
+          onClick={() => handleSwitchTab('dashboard')}
+          className={`px-3 py-1.5 text-xs font-medium rounded whitespace-nowrap shrink-0 ${
+            activeTab === 'dashboard'
+              ? 'bg-slate-900 text-white'
+              : 'text-slate-600'
+          }`}
+        >
+          Painel PBI
         </button>
         <button
           onClick={() => handleSwitchTab('planilha')}
