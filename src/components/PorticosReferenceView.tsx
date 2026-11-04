@@ -354,6 +354,7 @@ CAT 9 → 7+ eixos dupla  (Bitrem/Rodotrem)`}
                 const simulatedValue = calculateTariffValue(
                   p.tarifaCat1,
                   activeCategory.cat,
+                  '00',
                   cat9Axles
                 );
                 return (

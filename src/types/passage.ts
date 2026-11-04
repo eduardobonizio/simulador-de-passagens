@@ -40,6 +40,14 @@ export interface PassageRecord {
   placaLidaOcr?: string;
   /** Anomalia óptica na captura das câmeras do pórtico */
   anomaliaOptica?: AnomaliaOptica;
+  /** Em casos de lama, indica se afeta ambas as câmeras ou apenas frontal/traseira */
+  lamaAngulo?: 'ambas' | 'frontal' | 'traseira';
+  /** Posição do caractere adulterado (ex: fita isolante em posições 0..6) */
+  posicaoAdulterada?: number;
+  /** Índices dos caracteres onde o OCR cometeu erro de leitura (0..6) */
+  posicoesErroOcr?: number[];
+  /** Tipo didático de erro de OCR */
+  tipoErroOcr?: 'substituicao' | 'segmentacao' | 'desgaste' | 'adulteracao';
   /** Indica se a passagem é fisicamente impossível de validar (deve ser marcada como Ilegível) */
   ehIlegivelReal?: boolean;
   /** Descrição detalhada da condição óptica da foto */

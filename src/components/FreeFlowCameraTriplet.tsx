@@ -26,7 +26,13 @@ interface SliderState {
 function getBalancedSliderState(record: PassageRecord): SliderState {
   const anomalia: AnomaliaOptica = record.anomaliaOptica || 'normal';
   const conf = Math.max(0, Math.min(100, record.confiancaOcr ?? 70));
-  const isIllegible = record.ehIlegivelReal || anomalia === 'placa_ilegivel_barro' || anomalia === 'lateral_obstruida';
+  const isMudOnBoth =
+    anomalia === 'placa_ilegivel_barro' &&
+    (!record.lamaAngulo || record.lamaAngulo === 'ambas');
+  const isIllegible =
+    record.ehIlegivelReal ||
+    isMudOnBoth ||
+    anomalia === 'lateral_obstruida';
 
   // 1. Caso Ilegível: posições pseudo-aleatórias baseadas no seq da passagem
   if (isIllegible) {
@@ -235,8 +241,12 @@ export const FreeFlowCameraTriplet: React.FC<FreeFlowCameraTripletProps> = ({
   const maxPossibleReduction = baseBlurPx * 0.95;
   const effectiveReduction = maxPossibleReduction * (sharpness / 100) * opticalSynergy;
   
+  const isMudOnBoth =
+    anomalia === 'placa_ilegivel_barro' &&
+    (!record.lamaAngulo || record.lamaAngulo === 'ambas');
+
   const effectivePlateBlur =
-    anomalia === 'placa_ilegivel_barro'
+    isMudOnBoth
       ? 6.5
       : Math.max(0.15, baseBlurPx - effectiveReduction);
 
@@ -262,8 +272,11 @@ export const FreeFlowCameraTriplet: React.FC<FreeFlowCameraTripletProps> = ({
 
   // Score percentual exibido no topo: reflete a convergência dos 3 sliders
   let readabilityScore = 100;
-  if (anomalia === 'placa_ilegivel_barro' || anomalia === 'lateral_obstruida') {
+  if (isMudOnBoth || anomalia === 'lateral_obstruida') {
     readabilityScore = Math.min(32, Math.round(15 + sharpness * 0.12));
+  } else if (anomalia === 'placa_ilegivel_barro') {
+    // Apenas um dos ângulos com lama: a outra câmera está limpa e legível!
+    readabilityScore = Math.round(opticalSynergy * sharpnessFitness * 100);
   } else if (anomalia === 'sol_forte') {
     readabilityScore = Math.round(opticalSynergy * sharpnessFitness * 100);
   } else if (anomalia === 'muito_escura') {
@@ -311,7 +324,14 @@ export const FreeFlowCameraTriplet: React.FC<FreeFlowCameraTripletProps> = ({
     const angleBlur =
       cameraAngle === 'rear' ? Math.max(0, effectivePlateBlur * 0.85) : effectivePlateBlur;
 
-    if (anomalia === 'placa_ilegivel_barro') {
+    const hasMudHere =
+      anomalia === 'placa_ilegivel_barro' &&
+      (!record.lamaAngulo ||
+        record.lamaAngulo === 'ambas' ||
+        (record.lamaAngulo === 'frontal' && cameraAngle === 'front') ||
+        (record.lamaAngulo === 'traseira' && cameraAngle === 'rear'));
+
+    if (hasMudHere) {
       // Renderiza placa Mercosul fisicamente coberta por manchas densas de barro/desgaste,
       // SEM qualquer texto dizendo "ILEGÍVEL" para que o próprio operador perceba visualmente.
       return (
@@ -353,6 +373,9 @@ export const FreeFlowCameraTriplet: React.FC<FreeFlowCameraTripletProps> = ({
       );
     }
 
+    const tapeIdx =
+      record.posicaoAdulterada !== undefined ? record.posicaoAdulterada : 3;
+
     return (
       <div
         style={{
@@ -369,7 +392,7 @@ export const FreeFlowCameraTriplet: React.FC<FreeFlowCameraTripletProps> = ({
         <div className="relative flex items-center justify-center gap-0.5 pt-0.5 pb-0.5 font-mono font-extrabold text-lg tracking-wider text-slate-950">
           {truePlate.split('').map((trueChar, idx) => {
             const ocrChar = ocrPlate[idx] || trueChar;
-            const hasTapeHere = anomalia === 'fita_isolante' && idx === 3;
+            const hasTapeHere = anomalia === 'fita_isolante' && idx === tapeIdx;
 
             return (
               <span key={idx} className="relative inline-block px-0.5">

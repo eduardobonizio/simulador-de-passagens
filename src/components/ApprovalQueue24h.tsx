@@ -346,10 +346,13 @@ CAT 9 → 7+ eixos dupla  (Bitrem, Rodotrem)`}
               </div>
               <ul className="space-y-1.5 text-slate-300 leading-relaxed">
                 <li>
-                  • Quando você perceber visualmente que a placa está encoberta por barro/dano e não permite ler os 7 caracteres mesmo ajustando os sliders.
+                  • Quando a placa estiver coberta de lama/dano <strong>em ambos os ângulos (CAM-01 e CAM-02)</strong>, sendo impossível ler mesmo ajustando os sliders.
                 </li>
                 <li>
-                  • Quando a visão dos pneus na <strong>CAM-03 Lateral</strong> estiver obstruída impedindo contar os eixos.
+                  • <strong>Atenção à regra dos 2 ângulos:</strong> Se a lama estiver cobrindo apenas uma câmera (ex: frontal suja), inspecione a outra (traseira limpa)! Se conseguir ler no outro ângulo, você deve validar com sucesso.
+                </li>
+                <li>
+                  • Quando a visão dos pneus na <strong>CAM-03 Lateral</strong> estiver fisicamente obstruída impedindo aferir os eixos.
                 </li>
               </ul>
             </div>

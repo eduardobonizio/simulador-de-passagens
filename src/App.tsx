@@ -637,8 +637,15 @@ export default function App() {
       const groundAxles = Math.max(2, totalAxles - liftedAxles);
 
       if (!plateCorrect) {
+        const plateMistakeNote =
+          targetRecord.anomaliaOptica === 'placa_ilegivel_barro' && !targetRecord.ehIlegivelReal
+            ? ` (Atenção à regra dos 2 ângulos: A placa ${targetRecord.lamaAngulo === 'frontal' ? 'frontal (CAM-01)' : 'traseira (CAM-02)'} estava com lama, mas a ${targetRecord.lamaAngulo === 'frontal' ? 'traseira (CAM-02)' : 'frontal (CAM-01)'} estava perfeitamente legível!)`
+            : targetRecord.anomaliaOptica === 'fita_isolante'
+            ? ` (Adulteração por fita isolante no ${targetRecord.posicaoAdulterada !== undefined ? targetRecord.posicaoAdulterada + 1 + 'º' : '4º'} caractere — Ative o Infravermelho para revelar a letra/número real!)`
+            : ` (${targetRecord.detalheAnomalia})`;
+
         errorDetails.push(
-          `PLACA INCORRETA: Você digitou "${cleanTypedPlate}", mas a placa correta era "${truePlate}". (${targetRecord.detalheAnomalia})`
+          `PLACA INCORRETA: Você digitou "${cleanTypedPlate}", mas a placa correta era "${truePlate}".${plateMistakeNote}`
         );
       } else {
         errorDetails.push(`Placa: Você acertou (${truePlate}).`);
@@ -881,9 +888,19 @@ export default function App() {
     }
   };
 
-  const targetRecordDetail = (r: PassageRecord) =>
-    r.detalheAnomalia ||
-    'Use os sliders de Brilho, Contraste, Nitidez e Infravermelho.';
+  const targetRecordDetail = (r: PassageRecord) => {
+    if (r.anomaliaOptica === 'placa_ilegivel_barro' && !r.ehIlegivelReal) {
+      const cleanCamera =
+        r.lamaAngulo === 'frontal' ? 'CAM-02 Traseira' : 'CAM-01 Frontal';
+      const dirtyCamera =
+        r.lamaAngulo === 'frontal' ? 'CAM-01 Frontal' : 'CAM-02 Traseira';
+      return `Apenas a ${dirtyCamera} estava com lama cobrindo a placa! A ${cleanCamera} estava limpa e perfeitamente legível para aprovação. O operador deve inspecionar ambos os ângulos antes de descartar como Ilegível.`;
+    }
+    return (
+      r.detalheAnomalia ||
+      'Use os sliders de Brilho, Contraste, Nitidez e Infravermelho.'
+    );
+  };
 
   const handleSimulateExpireAllQueue = () => {
     let count = 0;

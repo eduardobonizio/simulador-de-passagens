@@ -63,32 +63,172 @@ export function generateMercosulPlate(mode: 'mercosul7' | 'mercosul8' = 'mercosu
   return `${l()}${l()}${l()}${d()}${l()}${d()}${d()}`;
 }
 
-export function simulateOcrMisread(truePlate: string, anomalia: AnomaliaOptica): string {
-  if (anomalia === 'normal' || truePlate.length < 7) return truePlate;
+const TAPE_ADULTERATIONS: Record<string, string> = {
+  F: 'E',
+  P: 'B',
+  R: 'B',
+  C: 'O',
+  '1': '7',
+  '3': '8',
+  '0': '8',
+  '6': '8',
+  '5': '6',
+  '7': 'Z',
+  L: 'U',
+};
+
+const VISUAL_SUBSTITUTIONS: Record<string, string[]> = {
+  // Letras x Dígitos / Letras semelhantes
+  A: ['4', 'R'],
+  B: ['8', 'R', '3'],
+  C: ['0', 'G', 'O'],
+  D: ['0', 'O', 'Q'],
+  E: ['F', 'B'],
+  F: ['E', 'P'],
+  G: ['6', 'C', '0'],
+  H: ['M', 'N'],
+  I: ['1', 'T', 'L'],
+  J: ['U', '1'],
+  K: ['X', 'R'],
+  L: ['1', 'I'],
+  M: ['N', 'W'],
+  N: ['M', 'H'],
+  O: ['0', 'Q', 'D'],
+  P: ['R', 'F', '9', 'B'],
+  Q: ['0', 'O'],
+  R: ['P', 'B', 'K'],
+  S: ['5', '8'],
+  T: ['1', '7', 'I'],
+  U: ['V', '0'],
+  V: ['U', 'Y'],
+  W: ['M', 'V'],
+  X: ['K', 'Y'],
+  Y: ['V', 'X'],
+  Z: ['2', '7'],
+  // Dígitos x Letras / Dígitos semelhantes
+  '0': ['O', '8', 'D', 'Q'],
+  '1': ['I', '7', 'L', 'T'],
+  '2': ['Z', '7'],
+  '3': ['8', 'B', '5'],
+  '4': ['A', '1'],
+  '5': ['S', '6'],
+  '6': ['G', '8', '5', '0'],
+  '7': ['1', 'T', 'Z'],
+  '8': ['B', '3', '0', '6'],
+  '9': ['P', '0', '8'],
+};
+
+export interface OcrMisreadResult {
+  misreadPlate: string;
+  errorPositions: number[];
+  adulteratedPosition?: number;
+  errorType: 'substituicao' | 'segmentacao' | 'desgaste' | 'adulteracao';
+}
+
+export function simulateOcrMisreadDetailed(
+  truePlate: string,
+  anomalia: AnomaliaOptica,
+  lamaAngulo?: 'ambas' | 'frontal' | 'traseira'
+): OcrMisreadResult {
+  if (anomalia === 'normal' || truePlate.length < 7) {
+    return {
+      misreadPlate: truePlate,
+      errorPositions: [],
+      errorType: 'substituicao',
+    };
+  }
+
   const chars = truePlate.split('');
-  if (anomalia === 'placa_ilegivel_barro') {
-    // Simula leitura falha de OCR sem entregar "???" como spoiler
-    chars[1] = chars[1] === 'X' ? 'M' : 'X';
-    chars[3] = chars[3] === '8' ? '0' : '8';
-    chars[5] = chars[5] === '4' ? '1' : '4';
-    return chars.join('');
-  }
+  const totalLen = chars.length;
+
   if (anomalia === 'fita_isolante') {
-    const idx = 3;
-    const orig = chars[idx];
-    if (orig === '3' || orig === '0' || orig === '6') {
-      chars[idx] = '8';
-    } else if (orig === '8') {
-      chars[idx] = '3';
-    } else {
-      chars[idx] = '8';
-    }
-    return chars.join('');
+    // Procura posições onde cabe fita isolante realista
+    const candidateIndices: number[] = [];
+    chars.forEach((c, i) => {
+      if (TAPE_ADULTERATIONS[c]) {
+        candidateIndices.push(i);
+      }
+    });
+
+    // Se achou caracteres com fitas naturais (F, P, C, 1, 3, 0, 6, 5, 7, L), sorteia entre eles.
+    // Senão, escolhe qualquer posição aleatória entre 0 e totalLen - 1.
+    const chosenIdx =
+      candidateIndices.length > 0
+        ? pickRandom(candidateIndices)
+        : Math.floor(Math.random() * totalLen);
+
+    const origChar = chars[chosenIdx];
+    const adulterated =
+      TAPE_ADULTERATIONS[origChar] ||
+      (/[0-9]/.test(origChar) ? '8' : 'B');
+    chars[chosenIdx] = adulterated;
+
+    return {
+      misreadPlate: chars.join(''),
+      errorPositions: [chosenIdx],
+      adulteratedPosition: chosenIdx,
+      errorType: 'adulteracao',
+    };
   }
-  const lastIdx = chars.length - 1;
-  const lastChar = chars[lastIdx];
-  chars[lastIdx] = lastChar === '7' ? '1' : lastChar === '0' ? '8' : '0';
-  return chars.join('');
+
+  // Distribuição realista de erros em qualquer uma das 7 posições (índices 0..6)
+  const isAllMud = anomalia === 'placa_ilegivel_barro' && (!lamaAngulo || lamaAngulo === 'ambas');
+  const numErrors = isAllMud
+    ? Math.min(3, Math.max(2, Math.floor(2 + Math.random() * 2)))
+    : Math.random() < 0.45
+    ? 2
+    : 1;
+
+  const availableIndices = Array.from({ length: totalLen }, (_, i) => i);
+  // Embaralhamento Fisher-Yates para escolher posições totalmente aleatórias
+  for (let i = availableIndices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [availableIndices[i], availableIndices[j]] = [
+      availableIndices[j],
+      availableIndices[i],
+    ];
+  }
+
+  const selectedIndices = availableIndices
+    .slice(0, numErrors)
+    .sort((a, b) => a - b);
+  const errorPositions: number[] = [];
+
+  for (const idx of selectedIndices) {
+    const orig = chars[idx];
+    const subs = VISUAL_SUBSTITUTIONS[orig];
+    if (subs && subs.length > 0) {
+      chars[idx] = pickRandom(subs);
+      errorPositions.push(idx);
+    } else {
+      const isDigit = /[0-9]/.test(orig);
+      chars[idx] = isDigit
+        ? pickRandom(['0', '8', '1', '7', '5'])
+        : pickRandom(['O', 'B', 'I', 'S', 'Z']);
+      errorPositions.push(idx);
+    }
+  }
+
+  const errorType: 'substituicao' | 'segmentacao' | 'desgaste' =
+    Math.random() < 0.6
+      ? 'substituicao'
+      : Math.random() < 0.5
+      ? 'segmentacao'
+      : 'desgaste';
+
+  return {
+    misreadPlate: chars.join(''),
+    errorPositions,
+    errorType,
+  };
+}
+
+export function simulateOcrMisread(
+  truePlate: string,
+  anomalia: AnomaliaOptica,
+  lamaAngulo?: 'ambas' | 'frontal' | 'traseira'
+): string {
+  return simulateOcrMisreadDetailed(truePlate, anomalia, lamaAngulo).misreadPlate;
 }
 
 const FORMAS_PAGAMENTO_TAG = {
@@ -134,19 +274,48 @@ function chooseAnomalia(allowIllegible = true): {
   ehIlegivelReal: boolean;
   detalhe: string;
   ocrConfidence: number;
+  lamaAngulo?: 'ambas' | 'frontal' | 'traseira';
 } {
   const r = Math.random();
-  // ~22% de chance de gerar um caso genuinamente ilegível quando na fila de auditoria
-  if (allowIllegible && r < 0.12) {
-    return {
-      anomalia: 'placa_ilegivel_barro',
-      ehIlegivelReal: true,
-      detalhe:
-        'Placa encoberta por crosta opaca de barro/dano físico (Impossível ler os caracteres mesmo com filtros — Deve ser marcada como Ilegível)',
-      ocrConfidence: Math.floor(34 + Math.random() * 18),
-    };
+
+  // Casos de lama/barro na placa: ~20% de ocorrência na fila
+  if (r < 0.20) {
+    const mudRoll = Math.random();
+    if (allowIllegible && mudRoll < 0.33) {
+      // Ambas com lama -> Realmente Ilegível
+      return {
+        anomalia: 'placa_ilegivel_barro',
+        ehIlegivelReal: true,
+        lamaAngulo: 'ambas',
+        detalhe:
+          'Lama densa cobrindo as placas frontal (CAM-01) e traseira (CAM-02) (Impossível ler em ambos os ângulos — Marque Ilegível)',
+        ocrConfidence: Math.floor(25 + Math.random() * 20),
+      };
+    } else if (mudRoll < 0.66) {
+      // Lama só na frontal -> Placa traseira legível!
+      return {
+        anomalia: 'placa_ilegivel_barro',
+        ehIlegivelReal: false,
+        lamaAngulo: 'frontal',
+        detalhe:
+          'Lama cobrindo a placa frontal (CAM-01), mas a placa traseira (CAM-02) está legível — Inspecione o ângulo traseiro e Valide',
+        ocrConfidence: Math.floor(45 + Math.random() * 25),
+      };
+    } else {
+      // Lama só na traseira -> Placa frontal legível!
+      return {
+        anomalia: 'placa_ilegivel_barro',
+        ehIlegivelReal: false,
+        lamaAngulo: 'traseira',
+        detalhe:
+          'Lama cobrindo a placa traseira (CAM-02), mas a placa frontal (CAM-01) está legível — Inspecione o ângulo frontal e Valide',
+        ocrConfidence: Math.floor(45 + Math.random() * 25),
+      };
+    }
   }
-  if (allowIllegible && r < 0.22) {
+
+  // Obstrução na visão dos eixos na CAM-03
+  if (allowIllegible && r < 0.30) {
     return {
       anomalia: 'lateral_obstruida',
       ehIlegivelReal: true,
@@ -155,16 +324,20 @@ function chooseAnomalia(allowIllegible = true): {
       ocrConfidence: Math.floor(55 + Math.random() * 20),
     };
   }
-  if (r < 0.44) {
+
+  // Fita isolante com adulteração distribuída em qualquer posição
+  if (r < 0.52) {
     return {
       anomalia: 'fita_isolante',
       ehIlegivelReal: false,
       detalhe:
-        'Suspeita de fita isolante no 4º caractere da placa (Ative o Filtro Infravermelho + Contraste para revelar)',
+        'Suspeita de adulteração com fita isolante em caractere da placa (Ative o Filtro Infravermelho + Contraste para revelar)',
       ocrConfidence: Math.floor(42 + Math.random() * 25),
     };
   }
-  if (r < 0.66) {
+
+  // Sol forte
+  if (r < 0.72) {
     return {
       anomalia: 'sol_forte',
       ehIlegivelReal: false,
@@ -173,7 +346,9 @@ function chooseAnomalia(allowIllegible = true): {
       ocrConfidence: Math.floor(48 + Math.random() * 26),
     };
   }
-  if (r < 0.85) {
+
+  // Passagem noturna escura
+  if (r < 0.87) {
     return {
       anomalia: 'muito_escura',
       ehIlegivelReal: false,
@@ -182,6 +357,8 @@ function chooseAnomalia(allowIllegible = true): {
       ocrConfidence: Math.floor(38 + Math.random() * 28),
     };
   }
+
+  // Desfoque óptico
   return {
     anomalia: 'desfoque_velocidade',
     ehIlegivelReal: false,
@@ -226,6 +403,7 @@ export interface GenerateOptions {
   customDate?: Date;
   forceNearExpirationMinutes?: number;
   forceAnomalia?: AnomaliaOptica;
+  forceLamaAngulo?: 'ambas' | 'frontal' | 'traseira';
 }
 
 /**
@@ -358,33 +536,65 @@ export function generateSinglePassage(
   let detalheAnomalia = 'Captura limpa em condições normais de iluminação';
   let confiancaOcr = 98;
   let placaLidaOcr = placaReal;
+  let lamaAngulo: 'ambas' | 'frontal' | 'traseira' | undefined;
+  let posicaoAdulterada: number | undefined;
+  let posicoesErroOcr: number[] | undefined;
+  let tipoErroOcr: 'substituicao' | 'segmentacao' | 'desgaste' | 'adulteracao' | undefined;
 
   if (options?.forceAnomalia) {
     anomaliaOptica = options.forceAnomalia;
-    ehIlegivelReal =
-      anomaliaOptica === 'placa_ilegivel_barro' ||
-      anomaliaOptica === 'lateral_obstruida';
-    detalheAnomalia =
-      anomaliaOptica === 'placa_ilegivel_barro'
-        ? 'Placa fisicamente encoberta por barro/dano opaco (Impossível ler os caracteres — Deve ser marcada como Ilegível)'
-        : anomaliaOptica === 'lateral_obstruida'
-        ? 'Obstrução física na Câmera 03 Lateral impedindo aferir os eixos (Impossível validar categoria — Deve ser marcada como Ilegível)'
-        : 'Condição óptica adversa na pista';
-    confiancaOcr = ehIlegivelReal ? 41 : 54;
-    placaLidaOcr = simulateOcrMisread(placaReal, anomaliaOptica);
+    lamaAngulo = options.forceLamaAngulo;
+    if (anomaliaOptica === 'placa_ilegivel_barro') {
+      if (!lamaAngulo) {
+        lamaAngulo = pickRandom(['ambas', 'frontal', 'traseira']);
+      }
+      ehIlegivelReal = lamaAngulo === 'ambas';
+      detalheAnomalia =
+        lamaAngulo === 'ambas'
+          ? 'Lama densa cobrindo as placas frontal (CAM-01) e traseira (CAM-02) (Impossível ler em ambos os ângulos — Marque Ilegível)'
+          : lamaAngulo === 'frontal'
+          ? 'Lama cobrindo a placa frontal (CAM-01), mas a placa traseira (CAM-02) está legível — Inspecione o ângulo traseiro e Valide'
+          : 'Lama cobrindo a placa traseira (CAM-02), mas a placa frontal (CAM-01) está legível — Inspecione o ângulo frontal e Valide';
+      confiancaOcr = ehIlegivelReal ? 35 : 55;
+    } else if (anomaliaOptica === 'lateral_obstruida') {
+      ehIlegivelReal = true;
+      detalheAnomalia =
+        'Obstrução física na Câmera 03 Lateral impedindo aferir os eixos (Impossível validar categoria — Deve ser marcada como Ilegível)';
+      confiancaOcr = 54;
+    } else {
+      ehIlegivelReal = false;
+      detalheAnomalia = 'Condição óptica adversa na pista';
+      confiancaOcr = 54;
+    }
+    const misreadRes = simulateOcrMisreadDetailed(placaReal, anomaliaOptica, lamaAngulo);
+    placaLidaOcr = misreadRes.misreadPlate;
+    posicaoAdulterada = misreadRes.adulteratedPosition;
+    posicoesErroOcr = misreadRes.errorPositions;
+    tipoErroOcr = misreadRes.errorType;
   } else if (aguardandoAprovacao24h || estadoRd === 'Pago perdido') {
     const chosen = chooseAnomalia(true);
     anomaliaOptica = chosen.anomalia;
     ehIlegivelReal = chosen.ehIlegivelReal;
     detalheAnomalia = chosen.detalhe;
     confiancaOcr = chosen.ocrConfidence;
-    placaLidaOcr = simulateOcrMisread(placaReal, anomaliaOptica);
+    lamaAngulo = chosen.lamaAngulo;
+    const misreadRes = simulateOcrMisreadDetailed(placaReal, anomaliaOptica, lamaAngulo);
+    placaLidaOcr = misreadRes.misreadPlate;
+    posicaoAdulterada = misreadRes.adulteratedPosition;
+    posicoesErroOcr = misreadRes.errorPositions;
+    tipoErroOcr = misreadRes.errorType;
   } else if (Math.random() < 0.2) {
     const chosen = chooseAnomalia(false);
     anomaliaOptica = chosen.anomalia;
     ehIlegivelReal = false;
     detalheAnomalia = chosen.detalhe;
     confiancaOcr = 86;
+    lamaAngulo = chosen.lamaAngulo;
+    const misreadRes = simulateOcrMisreadDetailed(placaReal, anomaliaOptica, lamaAngulo);
+    placaLidaOcr = misreadRes.misreadPlate;
+    posicaoAdulterada = misreadRes.adulteratedPosition;
+    posicoesErroOcr = misreadRes.errorPositions;
+    tipoErroOcr = misreadRes.errorType;
   }
 
   const placa = aguardandoAprovacao24h ? placaLidaOcr : placaReal;
@@ -446,6 +656,10 @@ export function generateSinglePassage(
     placaReal,
     placaLidaOcr,
     anomaliaOptica,
+    lamaAngulo,
+    posicaoAdulterada,
+    posicoesErroOcr,
+    tipoErroOcr,
     ehIlegivelReal,
     detalheAnomalia,
     velocidadeKmh: Math.floor(68 + Math.random() * 38),
@@ -491,6 +705,9 @@ export function createInitialSeedRecords(
     placaReal: 'FAK3A01',
     placaLidaOcr: 'FAK0001',
     anomaliaOptica: 'fita_isolante',
+    posicaoAdulterada: 3,
+    posicoesErroOcr: [3],
+    tipoErroOcr: 'adulteracao',
     ehIlegivelReal: false,
     detalheAnomalia:
       'Placa adulterada com fita isolante e não aprovada dentro das 24 horas',
@@ -512,16 +729,21 @@ export function createInitialSeedRecords(
 
   const records: PassageRecord[] = [firstRow];
 
-  const regularLimit = Math.max(2, count - 6);
+  const regularLimit = Math.max(2, count - 7);
   for (let i = 2; i <= regularLimit; i++) {
     records.push(generateSinglePassage(i, config));
   }
 
-  // Garantir 6 passagens na fila 24h com prazos >= 2 minutos e casos variados (legíveis + ilegíveis)
-  const queueSeeds: { mins: number; anomalia: AnomaliaOptica }[] = [
+  // Garantir passagens diversificadas na fila 24h (incluindo lama em 1 ângulo vs ambos os ângulos)
+  const queueSeeds: {
+    mins: number;
+    anomalia: AnomaliaOptica;
+    lamaAngulo?: 'ambas' | 'frontal' | 'traseira';
+  }[] = [
     { mins: 3.5, anomalia: 'fita_isolante' },
     { mins: 6.0, anomalia: 'sol_forte' },
-    { mins: 9.5, anomalia: 'placa_ilegivel_barro' },
+    { mins: 8.5, anomalia: 'placa_ilegivel_barro', lamaAngulo: 'frontal' }, // Lama apenas na CAM-01 frontal (CAM-02 legível!)
+    { mins: 12.0, anomalia: 'placa_ilegivel_barro', lamaAngulo: 'ambas' },  // Ambas com lama (Realmente Ilegível!)
     { mins: 16.0, anomalia: 'muito_escura' },
     { mins: 32.0, anomalia: 'lateral_obstruida' },
     { mins: 95.0, anomalia: 'desfoque_velocidade' },
@@ -546,6 +768,7 @@ export function createInitialSeedRecords(
         generateSinglePassage(seq, queueConfig, {
           forceNearExpirationMinutes: seed.mins,
           forceAnomalia: seed.anomalia,
+          forceLamaAngulo: seed.lamaAngulo,
         })
       );
     }
