@@ -1,6 +1,6 @@
 {
-  "summary":  "Plano de implementação atualizado: remoção de spoilers de ilegibilidade e de textos de rodagem na CAM-03, botão Parar de Validar Placas sem alertas fora da estação, cálculo exato de Cat original descontando Subcat (eixos erguidos) na planilha e filtro mínimo de 1 minuto para envio de novas passagens na estação.",
-  "updatedAt":  "2026-10-30T18:53:49.727360710Z",
-  "requestFeedback":  true,
-  "userFacing":  true
+  "summary": "Plano para balancear a posição inicial dos sliders de acordo com a Confiança Inicial do OCR: confiança 100% inicia perfeita e legível; confiança baixa (ex: 5%) inicia bem distante dos valores ideais; casos ilegíveis iniciam em posições totalmente aleatórias.",
+  "updatedAt": "2026-11-04T14:00:36.683026062Z",
+  "requestFeedback": true,
+  "userFacing": true
 }

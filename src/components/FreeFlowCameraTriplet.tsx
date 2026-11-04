@@ -8,24 +8,157 @@ interface FreeFlowCameraTripletProps {
   hideCategorySpoilers?: boolean;
 }
 
+interface SliderState {
+  brightness: number;
+  contrast: number;
+  sharpness: number;
+  zoom: number;
+  infrared: boolean;
+}
+
+/**
+ * Calcula a posição inicial dos sliders de acordo com a Confiança Inicial do OCR:
+ * - Confiança 100%: Sliders iniciam na posição calibrada e perfeita (100% legível).
+ * - Confiança baixa (ex: 5% a 30%): Sliders iniciam no extremo oposto / bem distantes do que a imagem precisa.
+ * - Confiança intermediária: Deslocamento proporcional à perda de confiança (100 - conf).
+ * - Placa ilegível: Sliders iniciam em posições totalmente aleatórias e dispersas a cada passagem.
+ */
+function getBalancedSliderState(record: PassageRecord): SliderState {
+  const anomalia: AnomaliaOptica = record.anomaliaOptica || 'normal';
+  const conf = Math.max(0, Math.min(100, record.confiancaOcr ?? 70));
+  const isIllegible = record.ehIlegivelReal || anomalia === 'placa_ilegivel_barro' || anomalia === 'lateral_obstruida';
+
+  // 1. Caso Ilegível: posições pseudo-aleatórias baseadas no seq da passagem
+  if (isIllegible) {
+    const seed = (record.seq * 9301 + 49297) % 233280;
+    const rnd1 = (seed % 100) / 100;
+    const rnd2 = ((seed * 7) % 100) / 100;
+    const rnd3 = ((seed * 13) % 100) / 100;
+    const rnd4 = ((seed * 19) % 100) / 100;
+
+    return {
+      brightness: Math.round(-75 + rnd1 * 150), // entre -75% e +75%
+      contrast: Math.round(60 + rnd2 * 170),    // entre 60% e 230%
+      sharpness: Math.round(rnd3 * 90),         // entre 0% e 90%
+      zoom: Number((1.0 + rnd4 * 1.5).toFixed(1)), // entre 1.0x e 2.5x
+      infrared: rnd1 > 0.6,
+    };
+  }
+
+  // 2. Pontos ideais de calibração para 100% de legibilidade
+  let idealBrightness = 0;
+  let idealContrast = 100;
+  let idealSharpness = 50;
+  let idealZoom = 1.35;
+  let idealInfrared = false;
+
+  // Ponto mais adverso (extremo oposto de onde a imagem precisa estar)
+  let worstBrightness = 0;
+  let worstContrast = 60;
+  let worstSharpness = 0;
+  let worstZoom = 1.0;
+
+  if (anomalia === 'sol_forte') {
+    // Sol forte precisa de brilho negativo e alto contraste
+    idealBrightness = -45;
+    idealContrast = 165;
+    idealSharpness = 80;
+    idealZoom = 1.4;
+
+    worstBrightness = +70; // estourado no branco
+    worstContrast = 60;
+    worstSharpness = 0;
+    worstZoom = 1.0;
+  } else if (anomalia === 'muito_escura') {
+    // Foto escura precisa de brilho positivo e alto contraste
+    idealBrightness = +45;
+    idealContrast = 165;
+    idealSharpness = 75;
+    idealZoom = 1.4;
+
+    worstBrightness = -70; // afundado no preto
+    worstContrast = 60;
+    worstSharpness = 0;
+    worstZoom = 1.0;
+  } else if (anomalia === 'desfoque_velocidade') {
+    idealBrightness = -5;
+    idealContrast = 155;
+    idealSharpness = 85;
+    idealZoom = 1.45;
+
+    worstBrightness = +45;
+    worstContrast = 65;
+    worstSharpness = 0;
+    worstZoom = 1.0;
+  } else if (anomalia === 'fita_isolante') {
+    idealBrightness = -10;
+    idealContrast = 165;
+    idealSharpness = 75;
+    idealZoom = 1.5;
+    idealInfrared = true;
+
+    worstBrightness = -60;
+    worstContrast = 70;
+    worstSharpness = 5;
+    worstZoom = 1.0;
+  } else {
+    // Normal
+    idealBrightness = 0;
+    idealContrast = 100;
+    idealSharpness = 55;
+    idealZoom = 1.3;
+
+    worstBrightness = -65;
+    worstContrast = 60;
+    worstSharpness = 0;
+    worstZoom = 1.0;
+  }
+
+  // Fator de distância: 0 para conf 100%, 0.95 para conf 5%
+  const distanceFactor = Math.max(0, Math.min(1.0, (100 - conf) / 95));
+
+  const initialBrightness = Math.round(
+    idealBrightness + (worstBrightness - idealBrightness) * distanceFactor
+  );
+  const initialContrast = Math.round(
+    idealContrast + (worstContrast - idealContrast) * distanceFactor
+  );
+  const initialSharpness = Math.round(
+    idealSharpness + (worstSharpness - idealSharpness) * distanceFactor
+  );
+  const initialZoom = Number(
+    (idealZoom + (worstZoom - idealZoom) * distanceFactor).toFixed(1)
+  );
+
+  return {
+    brightness: Math.max(-75, Math.min(75, initialBrightness)),
+    contrast: Math.max(60, Math.min(230, initialContrast)),
+    sharpness: Math.max(0, Math.min(100, initialSharpness)),
+    zoom: Math.max(1.0, Math.min(2.6, initialZoom)),
+    infrared: conf >= 90 ? idealInfrared : false,
+  };
+}
+
 export const FreeFlowCameraTriplet: React.FC<FreeFlowCameraTripletProps> = ({
   record,
   compact = false,
 }) => {
-  const [brightness, setBrightness] = useState<number>(0);
-  const [contrast, setContrast] = useState<number>(100);
-  const [sharpness, setSharpness] = useState<number>(20);
-  const [infraredMode, setInfraredMode] = useState<boolean>(false);
-  const [plateZoom, setPlateZoom] = useState<number>(1.35);
+  const initialSliders = getBalancedSliderState(record);
+  const [brightness, setBrightness] = useState<number>(initialSliders.brightness);
+  const [contrast, setContrast] = useState<number>(initialSliders.contrast);
+  const [sharpness, setSharpness] = useState<number>(initialSliders.sharpness);
+  const [infraredMode, setInfraredMode] = useState<boolean>(initialSliders.infrared);
+  const [plateZoom, setPlateZoom] = useState<number>(initialSliders.zoom);
   const [focusedCamera, setFocusedCamera] = useState<'all' | 'front' | 'rear' | 'side'>('all');
 
-  // Sempre que mudar para uma nova placa/passagem, resetar os sliders para a posição original
+  // Sempre que mudar para uma nova placa/passagem, balancear os sliders conforme a Confiança OCR
   useEffect(() => {
-    setBrightness(0);
-    setContrast(100);
-    setSharpness(20);
-    setInfraredMode(false);
-    setPlateZoom(1.35);
+    const balanced = getBalancedSliderState(record);
+    setBrightness(balanced.brightness);
+    setContrast(balanced.contrast);
+    setSharpness(balanced.sharpness);
+    setInfraredMode(balanced.infrared);
+    setPlateZoom(balanced.zoom);
     setFocusedCamera('all');
   }, [record.seq, record.idRecibo]);
 
@@ -38,49 +171,118 @@ export const FreeFlowCameraTriplet: React.FC<FreeFlowCameraTripletProps> = ({
   const ocrPlate = record.placaLidaOcr || record.placa;
   const ocrConf = record.confiancaOcr ?? 72;
 
-  const baseBlurPx = Math.max(0, (100 - ocrConf) / 13);
-  const sharpnessReduction = (sharpness / 100) * baseBlurPx * 0.92;
+  // CÁLCULO DE CONVERGÊNCIA ÓPTICA (EXIGE COMBINAÇÃO DE BRILHO + CONTRASTE + NITIDEZ):
+  // 1. Convergência de Brilho (0.0 a 1.0) conforme a condição de iluminação
+  let brightnessFitness = 1.0;
+  if (anomalia === 'sol_forte') {
+    // Foto estourada de luz branca: exige Brilho negativo (ideal entre -35% e -60%)
+    if (brightness >= 0) {
+      brightnessFitness = 0.08;
+    } else {
+      const dist = Math.abs(brightness - (-45));
+      brightnessFitness = Math.max(0.12, Math.min(1.0, 1.0 - dist / 35));
+    }
+  } else if (anomalia === 'muito_escura') {
+    // Foto noturna na penumbra: exige Brilho positivo (ideal entre +35% e +60%)
+    if (brightness <= 0 && !infraredMode) {
+      brightnessFitness = 0.08;
+    } else if (infraredMode) {
+      brightnessFitness = 0.95;
+    } else {
+      const dist = Math.abs(brightness - 45);
+      brightnessFitness = Math.max(0.12, Math.min(1.0, 1.0 - dist / 35));
+    }
+  } else if (anomalia === 'desfoque_velocidade' || anomalia === 'fita_isolante') {
+    // Ajuste equilibrado de exposição (ideal entre -20% e +15%)
+    const dist = Math.abs(brightness - (-5));
+    brightnessFitness = Math.max(0.3, Math.min(1.0, 1.0 - dist / 40));
+  }
+
+  // 2. Convergência de Contraste (0.0 a 1.0)
+  // Quase todas as fotos com defeito exigem Contraste aumentado para separar os caracteres Mercosul
+  let contrastFitness = 1.0;
+  if (anomalia === 'sol_forte' || anomalia === 'muito_escura') {
+    // Ideal entre 140% e 195%
+    if (contrast <= 100 && !infraredMode) {
+      contrastFitness = 0.15;
+    } else {
+      const dist = Math.abs(contrast - 165);
+      contrastFitness = Math.max(0.2, Math.min(1.0, 1.0 - dist / 70));
+    }
+  } else if (anomalia === 'desfoque_velocidade') {
+    // Exige contraste para destacar as bordas dos caracteres (ideal entre 135% e 180%)
+    if (contrast <= 105) {
+      contrastFitness = 0.25;
+    } else {
+      const dist = Math.abs(contrast - 155);
+      contrastFitness = Math.max(0.3, Math.min(1.0, 1.0 - dist / 60));
+    }
+  } else if (anomalia === 'fita_isolante') {
+    if (contrast < 135 && !infraredMode) {
+      contrastFitness = 0.35;
+    } else {
+      contrastFitness = Math.min(1.0, (contrast - 90) / 60);
+    }
+  }
+
+  // 3. Eficiência da Nitidez: SÓ FAZ EFEITO SE O BRILHO E CONTRASTE ESTIVEREM ALINHADOS!
+  // Se o analista apenas jogar nitidez no máximo sem consertar brilho/contraste, a eficácia é travada em ~20%
+  const opticalSynergy = brightnessFitness * contrastFitness;
+  const sharpnessFitness = Math.min(1.0, sharpness / 75);
+
+  const baseBlurPx = Math.max(0, (100 - ocrConf) / 10);
+  // Redução real do blur depende da multiplicação dos 3 fatores simultâneos
+  const maxPossibleReduction = baseBlurPx * 0.95;
+  const effectiveReduction = maxPossibleReduction * (sharpness / 100) * opticalSynergy;
+  
   const effectivePlateBlur =
     anomalia === 'placa_ilegivel_barro'
-      ? 6.2
-      : Math.max(0, baseBlurPx - sharpnessReduction);
+      ? 6.5
+      : Math.max(0.15, baseBlurPx - effectiveReduction);
 
+  // Opacidade da névoa de luz solar: só se dissipa se o brilho for reduzido e contraste aumentado
   let sunGlareOpacity = 0;
   if (anomalia === 'sol_forte') {
-    const rawGlare = 0.88 + brightness / 110 - (contrast - 100) / 190;
-    sunGlareOpacity = Math.max(0.05, Math.min(0.95, rawGlare));
+    const glareFactor = Math.max(0, (1 - brightnessFitness * 0.85) * (1 - contrastFitness * 0.5));
+    sunGlareOpacity = Math.max(0.08, Math.min(0.94, glareFactor));
     if (infraredMode) sunGlareOpacity *= 0.35;
   }
 
+  // Opacidade da sombra noturna: só se dissipa se o brilho subir ou ativar infravermelho
   let nightShadowOpacity = 0;
   if (anomalia === 'muito_escura') {
-    const rawDark = 0.86 - brightness / 85 - (contrast - 100) / 260;
-    nightShadowOpacity = infraredMode ? 0.08 : Math.max(0.05, Math.min(0.93, rawDark));
+    const darkFactor = Math.max(0, (1 - brightnessFitness * 0.85) * (1 - contrastFitness * 0.5));
+    nightShadowOpacity = infraredMode ? 0.08 : Math.max(0.08, Math.min(0.92, darkFactor));
   }
 
+  // Revelação de fita isolante: exige Infravermelho OU combinação precisa de Contraste + Nitidez + Brilho
   const isTapeRevealed =
     anomalia === 'fita_isolante' &&
-    (infraredMode || (contrast >= 145 && sharpness >= 55));
+    (infraredMode || (contrast >= 145 && sharpness >= 60 && brightnessFitness >= 0.7));
 
+  // Score percentual exibido no topo: reflete a convergência dos 3 sliders
   let readabilityScore = 100;
   if (anomalia === 'placa_ilegivel_barro' || anomalia === 'lateral_obstruida') {
-    readabilityScore = Math.min(48, Math.round(22 + sharpness * 0.15));
+    readabilityScore = Math.min(32, Math.round(15 + sharpness * 0.12));
   } else if (anomalia === 'sol_forte') {
-    readabilityScore = Math.round((1 - sunGlareOpacity) * 100);
+    readabilityScore = Math.round(opticalSynergy * sharpnessFitness * 100);
   } else if (anomalia === 'muito_escura') {
-    readabilityScore = Math.round((1 - nightShadowOpacity) * 100);
+    readabilityScore = infraredMode
+      ? Math.round(Math.min(100, 70 + sharpness * 0.3))
+      : Math.round(opticalSynergy * sharpnessFitness * 100);
   } else if (anomalia === 'fita_isolante') {
-    readabilityScore = isTapeRevealed ? 96 : 44;
+    readabilityScore = isTapeRevealed ? 96 : Math.round(opticalSynergy * 45);
   } else if (anomalia === 'desfoque_velocidade') {
-    readabilityScore = Math.round(Math.max(35, 100 - effectivePlateBlur * 20));
+    readabilityScore = Math.round(opticalSynergy * sharpnessFitness * 100);
   }
 
   const handleResetFilters = () => {
-    setBrightness(0);
-    setContrast(100);
-    setSharpness(20);
-    setInfraredMode(false);
-    setPlateZoom(1.35);
+    const balanced = getBalancedSliderState(record);
+    setBrightness(balanced.brightness);
+    setContrast(balanced.contrast);
+    setSharpness(balanced.sharpness);
+    setInfraredMode(balanced.infrared);
+    setPlateZoom(balanced.zoom);
   };
 
   const cssFilterString = `brightness(${100 + brightness}%) contrast(${contrast}%) ${
