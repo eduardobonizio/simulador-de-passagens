@@ -1,0 +1,6 @@
+{
+  "name": "Caminhos da Celulose CCA — Gerador Free Flow & PBI",
+  "description": "Simulador contínuo de passagens Free Flow nos 12 pórticos da Caminhos da Celulose (CCA), fila de aprovação 24h e painel executivo de recuperação, cobrança e evasão para Power BI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,555 @@
+import {
+  CATEGORIAS_VEICULOS,
+  LISTA_VEICULOS_ISENTOS,
+  PORTICOS_CCA,
+} from '../data/porticos';
+import { AnomaliaOptica, EstadoRD, GeneratorConfig, PassageRecord } from '../types/passage';
+
+const LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+const DIGITS = '0123456789';
+
+const RECURRING_PLATES_7 = [
+  'CCA2A62', 'MSF4B40', 'RBP7C11', 'TRL9D01', 'CGR3E88',
+  'BGS5F20', 'NVA8G77', 'SRP1H33', 'AGC6J90', 'ANR2K15',
+  'CEL9M99', 'ELD8N44', 'SUZ7P22', 'ARA6Q10', 'MSX5R55',
+];
+
+const RECURRING_PLATES_8 = [
+  'CCA2A621', 'MSF4B402', 'RBP7C119', 'TRL9D014', 'CGR3E885',
+  'BGS5F207', 'NVA8G773', 'SRP1H338', 'AGC6J906', 'ANR2K150',
+];
+
+export function formatCurrencyBRL(value: number): string {
+  return `R$ ${value.toLocaleString('pt-BR', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
+export function formatDateTimeBR(date: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const d = pad(date.getDate());
+  const m = pad(date.getMonth() + 1);
+  const y = date.getFullYear();
+  const hh = pad(date.getHours());
+  const mm = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+  return `${d}/${m}/${y} ${hh}:${mm}:${ss}`;
+}
+
+export function generateMensagemId(date: Date, praca: string, seq: number): string {
+  const pad = (n: number, len = 2) => String(n).padStart(len, '0');
+  const yy = String(date.getFullYear()).slice(-2);
+  const mm = pad(date.getMonth() + 1);
+  const dd = pad(date.getDate());
+  const hh = pad(date.getHours());
+  const min = pad(date.getMinutes());
+  const ss = pad(date.getSeconds());
+  const mmm = pad((date.getMilliseconds() + seq * 37) % 1000, 3);
+  const laneNum = (seq % 2) + 1;
+  return `${yy}${mm}${dd}${hh}${min}${ss}${mmm}${praca}0${laneNum}`;
+}
+
+export function generateMercosulPlate(mode: 'mercosul7' | 'mercosul8' = 'mercosul7'): string {
+  if (Math.random() < 0.25) {
+    const pool = mode === 'mercosul8' ? RECURRING_PLATES_8 : RECURRING_PLATES_7;
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+  const l = () => LETTERS[Math.floor(Math.random() * LETTERS.length)];
+  const d = () => DIGITS[Math.floor(Math.random() * DIGITS.length)];
+  if (mode === 'mercosul8') {
+    return `${l()}${l()}${l()}${d()}${l()}${d()}${d()}${d()}`;
+  }
+  return `${l()}${l()}${l()}${d()}${l()}${d()}${d()}`;
+}
+
+export function simulateOcrMisread(truePlate: string, anomalia: AnomaliaOptica): string {
+  if (anomalia === 'normal' || truePlate.length < 7) return truePlate;
+  const chars = truePlate.split('');
+  if (anomalia === 'placa_ilegivel_barro') {
+    // Simula leitura falha de OCR sem entregar "???" como spoiler
+    chars[1] = chars[1] === 'X' ? 'M' : 'X';
+    chars[3] = chars[3] === '8' ? '0' : '8';
+    chars[5] = chars[5] === '4' ? '1' : '4';
+    return chars.join('');
+  }
+  if (anomalia === 'fita_isolante') {
+    const idx = 3;
+    const orig = chars[idx];
+    if (orig === '3' || orig === '0' || orig === '6') {
+      chars[idx] = '8';
+    } else if (orig === '8') {
+      chars[idx] = '3';
+    } else {
+      chars[idx] = '8';
+    }
+    return chars.join('');
+  }
+  const lastIdx = chars.length - 1;
+  const lastChar = chars[lastIdx];
+  chars[lastIdx] = lastChar === '7' ? '1' : lastChar === '0' ? '8' : '0';
+  return chars.join('');
+}
+
+const FORMAS_PAGAMENTO_TAG = {
+  forma: 'TAG Automatico',
+  emissores: ['Sem Parar', 'ConectCar', 'Veloe', 'Move Mais', 'Taggy'],
+  local: 'Automatico via Operadora (OSA)',
+  arrecadadores: ['Itau Unibanco', 'Banco Bradesco', 'Banco Santander'],
+};
+
+const FORMAS_PAGAMENTO_AVULSO = [
+  {
+    forma: 'PIX App CCA',
+    emissor: 'Pagamento Avulso Digital',
+    locais: ['App Caminhos da Celulose', 'Portal Web Free Flow CCA', 'WhatsApp Oficial CCA'],
+    arrecadadores: ['Itau Unibanco', 'Stone Pagamentos', 'Banco do Brasil'],
+  },
+  {
+    forma: 'Cartao de Credito',
+    emissor: 'Pagamento Avulso Digital',
+    locais: ['App Caminhos da Celulose', 'Portal Web Free Flow CCA', 'Totem AutoAtendimento SAU'],
+    arrecadadores: ['Stone Pagamentos', 'Rede / Itau', 'Cielo / Bradesco'],
+  },
+  {
+    forma: 'Cartao de Debito',
+    emissor: 'Pagamento Avulso Digital',
+    locais: ['Totem AutoAtendimento SAU', 'Rede Credenciada Postos MS'],
+    arrecadadores: ['Stone Pagamentos', 'Caixa Economica', 'Banco Santander'],
+  },
+  {
+    forma: 'Boleto / Convenio Frota',
+    emissor: 'Frota Corporativa Celulose',
+    locais: ['Portal Frotas CCA', 'Faturamento Mensal Consolidado'],
+    arrecadadores: ['Itau Unibanco', 'Banco Bradesco'],
+  },
+];
+
+function pickRandom<T>(arr: T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+function chooseAnomalia(allowIllegible = true): {
+  anomalia: AnomaliaOptica;
+  ehIlegivelReal: boolean;
+  detalhe: string;
+  ocrConfidence: number;
+} {
+  const r = Math.random();
+  // ~22% de chance de gerar um caso genuinamente ilegível quando na fila de auditoria
+  if (allowIllegible && r < 0.12) {
+    return {
+      anomalia: 'placa_ilegivel_barro',
+      ehIlegivelReal: true,
+      detalhe:
+        'Placa encoberta por crosta opaca de barro/dano físico (Impossível ler os caracteres mesmo com filtros — Deve ser marcada como Ilegível)',
+      ocrConfidence: Math.floor(34 + Math.random() * 18),
+    };
+  }
+  if (allowIllegible && r < 0.22) {
+    return {
+      anomalia: 'lateral_obstruida',
+      ehIlegivelReal: true,
+      detalhe:
+        'Obstrução física na visão dos eixos da Câmera 03 Lateral (Impossível aferir quantidade de eixos — Deve ser marcada como Ilegível)',
+      ocrConfidence: Math.floor(55 + Math.random() * 20),
+    };
+  }
+  if (r < 0.44) {
+    return {
+      anomalia: 'fita_isolante',
+      ehIlegivelReal: false,
+      detalhe:
+        'Suspeita de fita isolante no 4º caractere da placa (Ative o Filtro Infravermelho + Contraste para revelar)',
+      ocrConfidence: Math.floor(42 + Math.random() * 25),
+    };
+  }
+  if (r < 0.66) {
+    return {
+      anomalia: 'sol_forte',
+      ehIlegivelReal: false,
+      detalhe:
+        'Estouro de luz solar direta na placa (Reduza o Brilho e aumente o Contraste para ler)',
+      ocrConfidence: Math.floor(48 + Math.random() * 26),
+    };
+  }
+  if (r < 0.85) {
+    return {
+      anomalia: 'muito_escura',
+      ehIlegivelReal: false,
+      detalhe:
+        'Passagem noturna muito escura (Aumente o Brilho/Exposição ou ative o Infravermelho)',
+      ocrConfidence: Math.floor(38 + Math.random() * 28),
+    };
+  }
+  return {
+    anomalia: 'desfoque_velocidade',
+    ehIlegivelReal: false,
+    detalhe:
+      'Desfoque óptico de movimento (Aumente o slider de Nitidez e o Zoom na Placa)',
+    ocrConfidence: Math.floor(52 + Math.random() * 26),
+  };
+}
+
+function chooseEstadoRd(weights: GeneratorConfig['weights']): {
+  estadoRd: EstadoRD;
+  aguardandoAprovacao24h: boolean;
+} {
+  const total =
+    weights.pago +
+    weights.pendente +
+    weights.evasao +
+    weights.pagoPerdido +
+    weights.isento +
+    weights.fila24h;
+  const r = Math.random() * (total || 100);
+
+  let acc = weights.pago;
+  if (r < acc) return { estadoRd: 'Pago', aguardandoAprovacao24h: false };
+
+  acc += weights.pendente;
+  if (r < acc) return { estadoRd: 'Pendente', aguardandoAprovacao24h: false };
+
+  acc += weights.evasao;
+  if (r < acc) return { estadoRd: 'Evasao', aguardandoAprovacao24h: false };
+
+  acc += weights.pagoPerdido;
+  if (r < acc) return { estadoRd: 'Pago perdido', aguardandoAprovacao24h: false };
+
+  acc += weights.isento;
+  if (r < acc) return { estadoRd: 'Isento', aguardandoAprovacao24h: false };
+
+  return { estadoRd: 'Pendente', aguardandoAprovacao24h: true };
+}
+
+export interface GenerateOptions {
+  customDate?: Date;
+  forceNearExpirationMinutes?: number;
+  forceAnomalia?: AnomaliaOptica;
+}
+
+/**
+ * Calcula o valor exato da tarifa considerando:
+ * - Cat: Categoria original do veículo (total de eixos físicos do veículo + tipo de rodagem)
+ * - Subcat: Quantidade de eixos erguidos ("00", "01", "02", "03"), que são descontados na cobrança!
+ * - Rodagem Simples: 0,5x a tarifa base CAT 1 por eixo no solo
+ * - Rodagem Dupla: 1,0x a tarifa base CAT 1 por eixo no solo
+ */
+export function calculateTariffValue(
+  tarifaCat1: number,
+  catCode: string,
+  subcatCode = '00',
+  totalAxlesCat9?: number
+): number {
+  const catInfo =
+    CATEGORIAS_VEICULOS.find((c) => c.cat === catCode) || CATEGORIAS_VEICULOS[0];
+  if (catInfo.isento || catCode === '00') return 0;
+
+  const totalPhysicalAxles =
+    catCode === '09'
+      ? totalAxlesCat9 && totalAxlesCat9 >= 7
+        ? totalAxlesCat9
+        : 7
+      : catInfo.eixosCobrados;
+
+  const liftedAxles = Math.min(
+    Math.max(0, totalPhysicalAxles - 2),
+    Math.max(0, Number(subcatCode) || 0)
+  );
+  const groundAxles = Math.max(2, totalPhysicalAxles - liftedAxles);
+
+  const factorPerAxle = catInfo.rodagem === 'Simples' ? 0.5 : 1.0;
+  return Number((tarifaCat1 * groundAxles * factorPerAxle).toFixed(2));
+}
+
+export function generateSinglePassage(
+  seq: number,
+  config: GeneratorConfig,
+  options?: GenerateOptions
+): PassageRecord {
+  const idRecibo = `FAKEFF${String(seq).padStart(6, '0')}`;
+  const portico = pickRandom(PORTICOS_CCA);
+  const sentido = Math.random() < 0.5 ? 'LFF' : 'OFF';
+  const pista = `${portico.praca}${sentido}`;
+
+  const { estadoRd, aguardandoAprovacao24h } = chooseEstadoRd(config.weights);
+
+  const now = new Date();
+  let passageDate: Date;
+
+  if (options?.customDate) {
+    passageDate = options.customDate;
+  } else if (options?.forceNearExpirationMinutes !== undefined) {
+    const remainingMs = options.forceNearExpirationMinutes * 60 * 1000;
+    passageDate = new Date(now.getTime() - (24 * 3600 * 1000 - remainingMs));
+  } else if (aguardandoAprovacao24h) {
+    if (Math.random() < 0.45) {
+      // Mínimo de 1.8 minutos restantes para dar tempo de pensar ao entrar na estação
+      const remainingMinutes = 1.8 + Math.random() * 22;
+      passageDate = new Date(
+        now.getTime() - (24 * 3600 * 1000 - remainingMinutes * 60 * 1000)
+      );
+    } else {
+      const hoursAgo = Math.random() * 22 + 0.5;
+      passageDate = new Date(now.getTime() - hoursAgo * 3600 * 1000);
+    }
+  } else if (estadoRd === 'Pendente') {
+    const daysAgo = Math.random() * 27 + 0.5;
+    passageDate = new Date(now.getTime() - daysAgo * 86400 * 1000);
+  } else if (estadoRd === 'Evasao') {
+    const daysAgo = 31 + Math.random() * 44;
+    passageDate = new Date(now.getTime() - daysAgo * 86400 * 1000);
+  } else {
+    const daysAgo = Math.random() * 45;
+    passageDate = new Date(now.getTime() - daysAgo * 86400 * 1000);
+  }
+
+  // Distribuir todas as categorias CAT 01 a CAT 09 (Simples: CAT 1, 3, 5 | Dupla: CAT 2, 4, 6, 7, 8, 9)
+  let catInfo = CATEGORIAS_VEICULOS[0];
+  if (estadoRd === 'Isento') {
+    catInfo = CATEGORIAS_VEICULOS.find((c) => c.cat === '00')!;
+  } else {
+    const weightedCats = [
+      '01', '01', '01', '02', '03', '04', '05', '06', '07', '07', '08', '09',
+    ];
+    const pickedCatCode = pickRandom(weightedCats);
+    catInfo =
+      CATEGORIAS_VEICULOS.find((c) => c.cat === pickedCatCode) ||
+      CATEGORIAS_VEICULOS[0];
+  }
+
+  // Total de eixos físicos da categoria original (para CAT 09 pode ser 7, 8 ou 9 eixos físicos totais)
+  const totalPhysicalAxles =
+    catInfo.cat === '09'
+      ? pickRandom([7, 8, 9])
+      : catInfo.eixosCobrados;
+
+  // Subcat (eixos erguidos/suspensos): caminhões/carretas de rodagem dupla (CAT 4, 6, 7, 8, 9) podem ter eixos erguidos,
+  // respeitando que ao menos 2 eixos permanecem no solo.
+  const maxPossibleSuspended =
+    catInfo.rodagem === 'Dupla' && Number(catInfo.cat) >= 4
+      ? Math.min(3, Math.max(0, totalPhysicalAxles - 2))
+      : 0;
+
+  let subcat = '00';
+  if (maxPossibleSuspended === 1) {
+    subcat = pickRandom(['00', '00', '01']);
+  } else if (maxPossibleSuspended === 2) {
+    subcat = pickRandom(['00', '00', '01', '01', '02']);
+  } else if (maxPossibleSuspended >= 3) {
+    subcat = pickRandom(['00', '00', '01', '01', '02', '03']);
+  }
+
+  // Valor numérico na planilha desconta os eixos erguidos (Subcat) da categoria original (Cat)
+  const valorNumerico =
+    estadoRd === 'Isento'
+      ? 0
+      : calculateTariffValue(
+          portico.tarifaCat1,
+          catInfo.cat,
+          subcat,
+          totalPhysicalAxles
+        );
+  const valor = formatCurrencyBRL(valorNumerico);
+
+  const placaReal = generateMercosulPlate(config.plateMaskMode);
+  let anomaliaOptica: AnomaliaOptica = 'normal';
+  let ehIlegivelReal = false;
+  let detalheAnomalia = 'Captura limpa em condições normais de iluminação';
+  let confiancaOcr = 98;
+  let placaLidaOcr = placaReal;
+
+  if (options?.forceAnomalia) {
+    anomaliaOptica = options.forceAnomalia;
+    ehIlegivelReal =
+      anomaliaOptica === 'placa_ilegivel_barro' ||
+      anomaliaOptica === 'lateral_obstruida';
+    detalheAnomalia =
+      anomaliaOptica === 'placa_ilegivel_barro'
+        ? 'Placa fisicamente encoberta por barro/dano opaco (Impossível ler os caracteres — Deve ser marcada como Ilegível)'
+        : anomaliaOptica === 'lateral_obstruida'
+        ? 'Obstrução física na Câmera 03 Lateral impedindo aferir os eixos (Impossível validar categoria — Deve ser marcada como Ilegível)'
+        : 'Condição óptica adversa na pista';
+    confiancaOcr = ehIlegivelReal ? 41 : 54;
+    placaLidaOcr = simulateOcrMisread(placaReal, anomaliaOptica);
+  } else if (aguardandoAprovacao24h || estadoRd === 'Pago perdido') {
+    const chosen = chooseAnomalia(true);
+    anomaliaOptica = chosen.anomalia;
+    ehIlegivelReal = chosen.ehIlegivelReal;
+    detalheAnomalia = chosen.detalhe;
+    confiancaOcr = chosen.ocrConfidence;
+    placaLidaOcr = simulateOcrMisread(placaReal, anomaliaOptica);
+  } else if (Math.random() < 0.2) {
+    const chosen = chooseAnomalia(false);
+    anomaliaOptica = chosen.anomalia;
+    ehIlegivelReal = false;
+    detalheAnomalia = chosen.detalhe;
+    confiancaOcr = 86;
+  }
+
+  const placa = aguardandoAprovacao24h ? placaLidaOcr : placaReal;
+  const mensagemId = generateMensagemId(passageDate, portico.praca, seq);
+  const dataHora = formatDateTimeBR(passageDate);
+
+  let formaPagamento = '-';
+  let emissorGruposIsentos = '-';
+  let pago = '-';
+  let pagoNumerico = 0;
+  let localPagamento = '-';
+  let dataPagamento = '-';
+  let arrecadador = '-';
+
+  if (estadoRd === 'Pago') {
+    pagoNumerico = valorNumerico;
+    pago = formatCurrencyBRL(pagoNumerico);
+
+    if (Math.random() < 0.55) {
+      formaPagamento = FORMAS_PAGAMENTO_TAG.forma;
+      emissorGruposIsentos = pickRandom(FORMAS_PAGAMENTO_TAG.emissores);
+      localPagamento = FORMAS_PAGAMENTO_TAG.local;
+      arrecadador = pickRandom(FORMAS_PAGAMENTO_TAG.arrecadadores);
+      const payDate = new Date(
+        passageDate.getTime() + (Math.random() * 6 + 0.1) * 3600 * 1000
+      );
+      dataPagamento = formatDateTimeBR(payDate);
+    } else {
+      const avulso = pickRandom(FORMAS_PAGAMENTO_AVULSO);
+      formaPagamento = avulso.forma;
+      emissorGruposIsentos = avulso.emissor;
+      localPagamento = pickRandom(avulso.locais);
+      arrecadador = pickRandom(avulso.arrecadadores);
+      const maxDelayMs = Math.min(
+        28 * 86400 * 1000,
+        Math.max(3600 * 1000, now.getTime() - passageDate.getTime())
+      );
+      const payDate = new Date(passageDate.getTime() + Math.random() * maxDelayMs);
+      dataPagamento = formatDateTimeBR(payDate);
+    }
+  } else if (estadoRd === 'Isento') {
+    const isentoItem = pickRandom(LISTA_VEICULOS_ISENTOS);
+    emissorGruposIsentos = `${isentoItem.tipo} (Isento)`;
+  }
+
+  return {
+    seq,
+    idRecibo,
+    mensagemId,
+    dataHora,
+    timestampMs: passageDate.getTime(),
+    praca: portico.praca,
+    pista,
+    tipo: 'Free Flow',
+    cat: catInfo.cat,
+    eixosSoloReais: totalPhysicalAxles,
+    subcat,
+    placa,
+    placaReal,
+    placaLidaOcr,
+    anomaliaOptica,
+    ehIlegivelReal,
+    detalheAnomalia,
+    velocidadeKmh: Math.floor(68 + Math.random() * 38),
+    cpf: '',
+    estadoRd,
+    valor,
+    valorNumerico,
+    formaPagamento,
+    emissorGruposIsentos,
+    pago,
+    pagoNumerico,
+    localPagamento,
+    dataPagamento,
+    arrecadador,
+    aguardandoAprovacao24h,
+    expiraAprovacaoMs: aguardandoAprovacao24h
+      ? passageDate.getTime() + 24 * 3600 * 1000
+      : undefined,
+    confiancaOcr,
+  };
+}
+
+/**
+ * Cria a linha #1 idêntica ao exemplo anexo pelo usuário + registros iniciais + passagens variadas na fila 24h
+ */
+export function createInitialSeedRecords(
+  count: number,
+  config: GeneratorConfig
+): PassageRecord[] {
+  const firstRow: PassageRecord = {
+    seq: 1,
+    idRecibo: 'FAKEFF000001',
+    mensagemId: '2609230800016290101',
+    dataHora: '23/09/2026 08:00:01',
+    timestampMs: new Date(2026, 8, 23, 8, 0, 1).getTime(),
+    praca: '01',
+    pista: '01NFF',
+    tipo: 'Free Flow',
+    cat: '07',
+    eixosSoloReais: 5,
+    subcat: '00',
+    placa: 'FAK0001',
+    placaReal: 'FAK3A01',
+    placaLidaOcr: 'FAK0001',
+    anomaliaOptica: 'fita_isolante',
+    ehIlegivelReal: false,
+    detalheAnomalia:
+      'Placa adulterada com fita isolante e não aprovada dentro das 24 horas',
+    velocidadeKmh: 84,
+    cpf: '',
+    estadoRd: 'Pago perdido',
+    valor: 'R$ 105,00',
+    valorNumerico: 105.0,
+    formaPagamento: '-',
+    emissorGruposIsentos: '-',
+    pago: '-',
+    pagoNumerico: 0,
+    localPagamento: '-',
+    dataPagamento: '-',
+    arrecadador: '-',
+    aguardandoAprovacao24h: false,
+    confiancaOcr: 48,
+  };
+
+  const records: PassageRecord[] = [firstRow];
+
+  const regularLimit = Math.max(2, count - 6);
+  for (let i = 2; i <= regularLimit; i++) {
+    records.push(generateSinglePassage(i, config));
+  }
+
+  // Garantir 6 passagens na fila 24h com prazos >= 2 minutos e casos variados (legíveis + ilegíveis)
+  const queueSeeds: { mins: number; anomalia: AnomaliaOptica }[] = [
+    { mins: 3.5, anomalia: 'fita_isolante' },
+    { mins: 6.0, anomalia: 'sol_forte' },
+    { mins: 9.5, anomalia: 'placa_ilegivel_barro' },
+    { mins: 16.0, anomalia: 'muito_escura' },
+    { mins: 32.0, anomalia: 'lateral_obstruida' },
+    { mins: 95.0, anomalia: 'desfoque_velocidade' },
+  ];
+
+  const queueConfig: GeneratorConfig = {
+    ...config,
+    weights: {
+      pago: 0,
+      pendente: 0,
+      evasao: 0,
+      pagoPerdido: 0,
+      isento: 0,
+      fila24h: 100,
+    },
+  };
+
+  queueSeeds.forEach((seed, idx) => {
+    const seq = regularLimit + 1 + idx;
+    if (seq <= count) {
+      records.push(
+        generateSinglePassage(seq, queueConfig, {
+          forceNearExpirationMinutes: seed.mins,
+          forceAnomalia: seed.anomalia,
+        })
+      );
+    }
+  });
+
+  return records;
+}
